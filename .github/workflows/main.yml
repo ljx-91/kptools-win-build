@@ -1,0 +1,89 @@
+name: Build kptools Windows (UCRT64)
+
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kptools-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Windows x64 executable
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up MSYS2 UCRT64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          path-type: minimal
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-make
+            mingw-w64-ucrt-x86_64-zlib
+
+      - name: Configure and compile
+        shell: msys2 {0}
+        run: |
+          set -euxo pipefail
+          cp -f kernel/include/preset.h tools/preset.h
+          cmake -S tools -B build \
+            -G "MinGW Makefiles" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_MAKE_PROGRAM=/ucrt64/bin/mingw32-make.exe \
+            -DZLIB_ROOT=/ucrt64
+          cmake --build build --parallel 2 --verbose
+          test -f build/kptools.exe
+
+      - name: Test executable
+        shell: msys2 {0}
+        run: |
+          set -euxo pipefail
+          mkdir -p dist
+          ./build/kptools.exe --version | tee dist/version.txt
+          test "$(tr -d '\r\n' < dist/version.txt)" = "d0a"
+          ./build/kptools.exe --help > dist/help.txt
+
+      - name: Package executable and DLLs
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          cp build/kptools.exe dist/
+
+          printf '%s\n' \
+            'kptools Windows x64 UCRT64 build' \
+            'Keep this executable together with its DLL files.' \
+            'Build success does not certify boot image compatibility.' \
+            > dist/README_RUNTIME.txt
+
+          ldd build/kptools.exe | tee dist/dependencies.txt
+
+          if grep -qi 'not found' dist/dependencies.txt; then
+            echo "Missing runtime dependency"
+            exit 1
+          fi
+
+          sha256sum dist/* > dist/SHA256SUMS.txt
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kptools-win-ucrt64
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
