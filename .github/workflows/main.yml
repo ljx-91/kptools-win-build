@@ -50,35 +50,35 @@ jobs:
           cmake --build build --parallel 2 --verbose
           test -f build/kptools.exe
 
-      - name: Test executable
+      - name: Test executable and prepare package
         shell: msys2 {0}
         run: |
           set -euxo pipefail
           mkdir -p dist
+
           ./build/kptools.exe --version | tee dist/version.txt
           test "$(tr -d '\r\n' < dist/version.txt)" = "d0a"
           ./build/kptools.exe --help > dist/help.txt
 
-      - name: Package executable and DLLs
-        shell: msys2 {0}
-        run: |
-          set -euo pipefail
-          cp build/kptools.exe dist/
+          cp -v build/kptools.exe dist/
+          cp -v /ucrt64/bin/zlib1.dll dist/
 
           printf '%s\n' \
             'kptools Windows x64 UCRT64 build' \
-            'Keep this executable together with its DLL files.' \
+            'Keep kptools.exe and zlib1.dll in the same folder.' \
             'Build success does not certify boot image compatibility.' \
             > dist/README_RUNTIME.txt
 
           ldd build/kptools.exe | tee dist/dependencies.txt
-
           if grep -qi 'not found' dist/dependencies.txt; then
             echo "Missing runtime dependency"
             exit 1
           fi
 
-          sha256sum dist/* > dist/SHA256SUMS.txt
+          test -s dist/kptools.exe
+          test -s dist/zlib1.dll
+          cd dist
+          sha256sum kptools.exe zlib1.dll version.txt help.txt dependencies.txt README_RUNTIME.txt > SHA256SUMS.txt
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
